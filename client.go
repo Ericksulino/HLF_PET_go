@@ -145,6 +145,30 @@ func main() {
 			}
 		}
 		createAssetBench(contract, tps, numAssets)
+	case "createAssetBenchTime":
+		tps := 10                    // Valor padrão para TPS
+		duration := 10 * time.Second // Duração padrão para o benchmark (10 segundos)
+
+		if len(os.Args) >= 3 {
+			tpsVal, err := strconv.Atoi(os.Args[2])
+			if err == nil {
+				tps = tpsVal
+			} else {
+				fmt.Println("Error converting TPS, using default value of 10.")
+			}
+		}
+
+		if len(os.Args) >= 4 {
+			durationVal, err := strconv.Atoi(os.Args[3])
+			if err == nil {
+				duration = time.Duration(durationVal) * time.Second
+			} else {
+				fmt.Println("Error converting duration, using default value of 10 seconds.")
+			}
+		}
+
+		createAssetBenchTime(contract, tps, duration) // Atualização para a nova função
+
 	case "createAssetEndorse":
 		var num int
 		var err error
@@ -462,6 +486,135 @@ func createAssetBench(contract *client.Contract, tps int, numAssets int) {
 	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
 	fmt.Printf("| %-15d | %-20d | %-7d | %-11s | %-8.2f | %-20.2f | %-20.2f |\n",
 		tps, numAssets, successfulTransactions, elapsedTime.Truncate(time.Millisecond), tpsAchieved, meanLatency, stdDev)
+	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
+}
+
+func createAssetBenchTime(contract *client.Contract, tps int, duration time.Duration) {
+	if tps <= 0 {
+		fmt.Println("Invalid TPS value. Please provide a positive integer.")
+		return
+	}
+	if duration <= 0 {
+		fmt.Println("Invalid duration value. Please provide a positive duration.")
+		return
+	}
+
+	fmt.Printf("\n--> Benchmarking CreateAsset at %d TPS for %s\n", tps, duration)
+
+	interval := time.Second / time.Duration(tps)
+
+	startTime := time.Now()
+	var wg sync.WaitGroup
+	var totalTransactions int
+
+	// Type to store transaction result data
+	type txResult struct {
+		Index        int
+		Start        time.Time
+		End          time.Time
+		Latency      time.Duration
+		Success      bool
+		ErrorMessage string
+	}
+
+	// Collect transaction results
+	var results []txResult
+
+	// Track elapsed time
+	elapsedTime := time.Duration(0)
+
+	// Run the benchmark for the given duration
+	for elapsedTime < duration {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+
+			// Sleep according to the interval to simulate TPS
+			time.Sleep(time.Duration(index) * interval)
+
+			hash := generateRandomHash()
+			txStartTime := time.Now()
+			_, err := contract.SubmitTransaction(methods[1], hash, "yellow", "5", "Tom", "1300")
+			txEndTime := time.Now()
+
+			// Record the result
+			if err != nil {
+				results = append(results, txResult{
+					Index:        index,
+					Start:        txStartTime,
+					End:          txEndTime,
+					Latency:      txEndTime.Sub(txStartTime),
+					Success:      false,
+					ErrorMessage: err.Error(),
+				})
+			} else {
+				results = append(results, txResult{
+					Index:   index,
+					Start:   txStartTime,
+					End:     txEndTime,
+					Latency: txEndTime.Sub(txStartTime),
+					Success: true,
+				})
+			}
+			totalTransactions++
+		}(totalTransactions)
+
+		elapsedTime = time.Since(startTime)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	endTime := time.Now()
+	totalDuration := endTime.Sub(startTime)
+
+	// Output the results
+	fmt.Printf("\n*** Transações Individuais ***\n")
+	fmt.Println("---------------------------------------------------------------------------------------------------------------")
+	fmt.Printf("| %-5s | %-30s | %-30s | %-10s | %-8s |\n", "ID", "Start", "End", "Latency(ms)", "Success")
+	fmt.Println("---------------------------------------------------------------------------------------------------------------")
+
+	var (
+		latenciesMs            []float64
+		successfulTransactions int
+		totalLatency           float64
+	)
+
+	// Process results for display
+	for _, res := range results {
+		latencyMs := float64(res.Latency.Milliseconds())
+		status := "NO"
+		if res.Success {
+			status = "YES"
+			latenciesMs = append(latenciesMs, latencyMs)
+			successfulTransactions++
+			totalLatency += latencyMs
+		}
+		fmt.Printf("| %-5d | %-30s | %-30s | %-10.2f | %-8s |\n",
+			res.Index,
+			res.Start.Format("2006-01-02 15:04:05.000"),
+			res.End.Format("2006-01-02 15:04:05.000"),
+			latencyMs,
+			status)
+	}
+	fmt.Println("---------------------------------------------------------------------------------------------------------------")
+
+	// Calculate aggregate metrics
+	var stdDev float64
+	meanLatency := totalLatency / float64(successfulTransactions)
+	for _, l := range latenciesMs {
+		stdDev += math.Pow(l-meanLatency, 2)
+	}
+	stdDev = math.Sqrt(stdDev / float64(successfulTransactions))
+
+	tpsAchieved := float64(successfulTransactions) / totalDuration.Seconds()
+
+	// Display summary
+	fmt.Printf("\n*** Benchmarking Summary ***\n")
+	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
+	fmt.Printf("| TPS Configurado | Transações Enviadas | Sucesso | Tempo Total | TPS Real | Latência Média (ms) | Desvio Padrão (ms) |\n")
+	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
+	fmt.Printf("| %-15d | %-20d | %-7d | %-11s | %-8.2f | %-20.2f | %-20.2f |\n",
+		tps, totalTransactions, successfulTransactions, totalDuration.Truncate(time.Millisecond), tpsAchieved, meanLatency, stdDev)
 	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
 }
 
