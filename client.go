@@ -48,6 +48,16 @@ type BatchParameters struct {
 	BatchSize    int
 }
 
+// AQUI: Definição do tipo no nível do pacote.
+type txResult struct {
+	Index        int
+	Start        time.Time
+	End          time.Time
+	Latency      time.Duration
+	Success      bool
+	ErrorMessage string
+}
+
 var now = time.Now()
 
 //var assetId = fmt.Sprintf("asset%d", now.Unix()*1e3+int64(now.Nanosecond())/1e6)
@@ -384,6 +394,7 @@ func createAssets(contract *client.Contract, n int) {
 }
 
 func createAssetBench(contract *client.Contract, tps int, numAssets int) {
+	// 1. Validação de Entrada
 	if tps <= 0 {
 		fmt.Println("Invalid TPS value. Please provide a positive integer.")
 		return
@@ -391,41 +402,40 @@ func createAssetBench(contract *client.Contract, tps int, numAssets int) {
 	if numAssets <= 0 {
 		numAssets = 1
 	}
-	if len(methods) < 2 {
-		fmt.Println("methods slice does not contain enough elements.")
-		return
-	}
+	// Supondo que 'methods' é uma variável global/do pacote
+	// if len(methods) < 2 {
+	//     fmt.Println("methods slice does not contain enough elements.")
+	//     return
+	// }
 
-	fmt.Printf("\n--> Benchmarking CreateAsset at %d TPS\n", tps)
+	fmt.Printf("\n--> Benchmarking CreateAsset: %d Transações a %d TPS\n", numAssets, tps)
 
+	// Intervalo de tempo entre o INÍCIO de cada transação (1/TPS)
 	interval := time.Second / time.Duration(tps)
 
 	startTime := time.Now()
 	var wg sync.WaitGroup
 	wg.Add(numAssets)
 
-	type txResult struct {
-		Index        int
-		Start        time.Time
-		End          time.Time
-		Latency      time.Duration
-		Success      bool
-		ErrorMessage string
-	}
-
+	// Pré-alocação do slice de resultados.
+	// Seguro porque cada goroutine escreverá em seu índice exclusivo.
 	results := make([]txResult, numAssets)
 
+	// 2. Loop de Envio (Controle de Taxa)
 	for i := 0; i < numAssets; i++ {
+		// Dispara a goroutine para a transação 'i'
 		go func(i int) {
 			defer wg.Done()
 
-			time.Sleep(time.Duration(i) * interval)
+			// ❌ time.Sleep removido daqui. O controle de ritmo é externo.
+
 			hash := generateRandomHash()
 
 			txStartTime := time.Now()
 			_, err := contract.SubmitTransaction(methods[1], hash, "yellow", "5", "Tom", "1300")
 			txEndTime := time.Now()
 
+			// Escrita no índice pré-alocado (i)
 			if err != nil {
 				results[i] = txResult{i, txStartTime, txEndTime, txEndTime.Sub(txStartTime), false, err.Error()}
 				return
@@ -433,13 +443,19 @@ func createAssetBench(contract *client.Contract, tps int, numAssets int) {
 
 			results[i] = txResult{i, txStartTime, txEndTime, txEndTime.Sub(txStartTime), true, ""}
 		}(i)
+
+		// 🟢 CORREÇÃO: Dormir APÓS INICIAR a goroutine para garantir o TPS.
+		// O loop espera pelo 'interval' antes de iniciar a PRÓXIMA transação.
+		time.Sleep(interval)
 	}
 
+	// 3. Aguardar Conclusão e Medir Tempo Total
+	fmt.Println("\nWaiting for all started transactions to complete...")
 	wg.Wait()
 	endTime := time.Now()
-	elapsedTime := endTime.Sub(startTime)
+	elapsedTime := endTime.Sub(startTime) // Tempo total de execução
 
-	// Tabela detalhada
+	// 4. Tabela detalhada
 	fmt.Printf("\n*** Transações Individuais ***\n")
 	fmt.Println("---------------------------------------------------------------------------------------------------------------")
 	fmt.Printf("| %-5s | %-30s | %-30s | %-10s | %-8s |\n", "ID", "Start", "End", "Latency(ms)", "Success")
@@ -469,17 +485,25 @@ func createAssetBench(contract *client.Contract, tps int, numAssets int) {
 	}
 	fmt.Println("---------------------------------------------------------------------------------------------------------------")
 
-	// Cálculo de métricas agregadas
+	// 5. Cálculo de métricas agregadas
 	var stdDev float64
-	meanLatency := totalLatency / float64(successfulTransactions)
-	for _, l := range latenciesMs {
-		stdDev += math.Pow(l-meanLatency, 2)
+	var meanLatency float64
+	if successfulTransactions > 0 {
+		meanLatency = totalLatency / float64(successfulTransactions)
+		for _, l := range latenciesMs {
+			stdDev += math.Pow(l-meanLatency, 2)
+		}
+		// Evita divisão por zero
+		if len(latenciesMs) > 0 {
+			stdDev = math.Sqrt(stdDev / float64(len(latenciesMs)))
+		} else {
+			stdDev = 0
+		}
 	}
-	stdDev = math.Sqrt(stdDev / float64(successfulTransactions))
 
 	tpsAchieved := float64(successfulTransactions) / elapsedTime.Seconds()
 
-	// Tabela resumida
+	// 6. Tabela resumida
 	fmt.Printf("\n*** Benchmarking Summary ***\n")
 	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
 	fmt.Printf("| TPS Configurado | Transações Enviadas | Sucesso | Tempo Total | TPS Real | Latência Média (ms) | Desvio Padrão (ms) |\n")
@@ -489,7 +513,10 @@ func createAssetBench(contract *client.Contract, tps int, numAssets int) {
 	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
 }
 
+// createAssetBenchTime executa um benchmark de criação de ativos
+// controlando a taxa de envio de transações (TPS) e a duração total.
 func createAssetBenchTime(contract *client.Contract, tps int, duration time.Duration) {
+	// 1. Validação de Entrada
 	if tps <= 0 {
 		fmt.Println("Invalid TPS value. Please provide a positive integer.")
 		return
@@ -499,75 +526,85 @@ func createAssetBenchTime(contract *client.Contract, tps int, duration time.Dura
 		return
 	}
 
-	fmt.Printf("\n--> Benchmarking CreateAsset at %d TPS for %s\n", tps, duration)
+	fmt.Printf("\n--> Benchmarking CreateAsset at %d TPS for %s\n", tps, duration.Truncate(time.Second))
 
+	// Variáveis Compartilhadas e Proteção
+	var (
+		wg                sync.WaitGroup
+		mu                sync.Mutex // Mutex para proteger o acesso a 'results'
+		totalTransactions int        // Total de transações INICIADAS
+		results           []txResult // Coleta dos resultados
+	)
+
+	// Configuração do Controlador de Taxa
+	// O intervalo é o tempo entre o início de cada transação (1/TPS)
 	interval := time.Second / time.Duration(tps)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-	startTime := time.Now()
-	var wg sync.WaitGroup
-	var totalTransactions int
+	// Configuração do Controlador de Duração
+	timeout := time.After(duration) // Canal que fecha após a duração do benchmark
 
-	// Type to store transaction result data
-	type txResult struct {
-		Index        int
-		Start        time.Time
-		End          time.Time
-		Latency      time.Duration
-		Success      bool
-		ErrorMessage string
-	}
+	startTime := time.Now() // Início real do benchmark (início do loop de envio)
 
-	// Collect transaction results
-	var results []txResult
+	// 2. Loop de Controle de Taxa e Duração
+loop:
+	for {
+		select {
+		case <-ticker.C:
+			// Ticker disparou: iniciar uma nova transação.
 
-	// Track elapsed time
-	elapsedTime := time.Duration(0)
-
-	// Run the benchmark for the given duration
-	for elapsedTime < duration {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-
-			// Sleep according to the interval to simulate TPS
-			time.Sleep(time.Duration(index) * interval)
-
-			hash := generateRandomHash()
-			txStartTime := time.Now()
-			_, err := contract.SubmitTransaction(methods[1], hash, "yellow", "5", "Tom", "1300")
-			txEndTime := time.Now()
-
-			// Record the result
-			if err != nil {
-				results = append(results, txResult{
-					Index:        index,
-					Start:        txStartTime,
-					End:          txEndTime,
-					Latency:      txEndTime.Sub(txStartTime),
-					Success:      false,
-					ErrorMessage: err.Error(),
-				})
-			} else {
-				results = append(results, txResult{
-					Index:   index,
-					Start:   txStartTime,
-					End:     txEndTime,
-					Latency: txEndTime.Sub(txStartTime),
-					Success: true,
-				})
-			}
+			// Incrementa o contador de transações iniciadas antes de disparar a goroutine
+			currentTxIndex := totalTransactions
 			totalTransactions++
-		}(totalTransactions)
 
-		elapsedTime = time.Since(startTime)
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+
+				// Lógica de Submissão da Transação
+				hash := generateRandomHash()
+				txStartTime := time.Now()
+				// Chamada de transação: Assumindo que methods[1] é a string "CreateAsset"
+				_, err := contract.SubmitTransaction(methods[1], hash, "yellow", "5", "Tom", "1300")
+				txEndTime := time.Now()
+
+				// 🔴 Proteger o acesso ao slice 'results'
+				mu.Lock()
+				if err != nil {
+					results = append(results, txResult{
+						Index:        index,
+						Start:        txStartTime,
+						End:          txEndTime,
+						Latency:      txEndTime.Sub(txStartTime),
+						Success:      false,
+						ErrorMessage: err.Error(),
+					})
+				} else {
+					results = append(results, txResult{
+						Index:   index,
+						Start:   txStartTime,
+						End:     txEndTime,
+						Latency: txEndTime.Sub(txStartTime),
+						Success: true,
+					})
+				}
+				mu.Unlock() // Libera o Mutex
+			}(currentTxIndex)
+
+		case <-timeout:
+			// O tempo 'duration' especificado terminou.
+			break loop // Sai do loop principal de envio
+		}
 	}
 
-	// Wait for all goroutines to complete
+	// 3. Aguardar Conclusão
+	fmt.Println("\nWaiting for all started transactions to complete...")
 	wg.Wait()
 	endTime := time.Now()
-	totalDuration := endTime.Sub(startTime)
+	totalDuration := endTime.Sub(startTime) // Tempo total real gasto
 
-	// Output the results
+	// 4. Output das Transações Individuais
 	fmt.Printf("\n*** Transações Individuais ***\n")
 	fmt.Println("---------------------------------------------------------------------------------------------------------------")
 	fmt.Printf("| %-5s | %-30s | %-30s | %-10s | %-8s |\n", "ID", "Start", "End", "Latency(ms)", "Success")
@@ -579,7 +616,7 @@ func createAssetBenchTime(contract *client.Contract, tps int, duration time.Dura
 		totalLatency           float64
 	)
 
-	// Process results for display
+	// Processar resultados
 	for _, res := range results {
 		latencyMs := float64(res.Latency.Milliseconds())
 		status := "NO"
@@ -598,17 +635,27 @@ func createAssetBenchTime(contract *client.Contract, tps int, duration time.Dura
 	}
 	fmt.Println("---------------------------------------------------------------------------------------------------------------")
 
-	// Calculate aggregate metrics
+	// 5. Calcular Métricas Agregadas
 	var stdDev float64
-	meanLatency := totalLatency / float64(successfulTransactions)
-	for _, l := range latenciesMs {
-		stdDev += math.Pow(l-meanLatency, 2)
+	var meanLatency float64
+	if successfulTransactions > 0 {
+		meanLatency = totalLatency / float64(successfulTransactions)
+
+		// Cálculo do Desvio Padrão
+		for _, l := range latenciesMs {
+			stdDev += math.Pow(l-meanLatency, 2)
+		}
+		// Evita divisão por zero
+		if len(latenciesMs) > 0 {
+			stdDev = math.Sqrt(stdDev / float64(len(latenciesMs)))
+		} else {
+			stdDev = 0
+		}
 	}
-	stdDev = math.Sqrt(stdDev / float64(successfulTransactions))
 
 	tpsAchieved := float64(successfulTransactions) / totalDuration.Seconds()
 
-	// Display summary
+	// 6. Display do Resumo
 	fmt.Printf("\n*** Benchmarking Summary ***\n")
 	fmt.Printf("-------------------------------------------------------------------------------------------------------------------\n")
 	fmt.Printf("| TPS Configurado | Transações Enviadas | Sucesso | Tempo Total | TPS Real | Latência Média (ms) | Desvio Padrão (ms) |\n")
