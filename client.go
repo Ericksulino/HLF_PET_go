@@ -58,7 +58,7 @@ type txResult struct {
 	ErrorMessage string
 }
 
-var now = time.Now()
+// var now = time.Now()
 
 //var assetId = fmt.Sprintf("asset%d", now.Unix()*1e3+int64(now.Nanosecond())/1e6)
 
